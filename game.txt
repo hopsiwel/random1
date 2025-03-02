@@ -1,0 +1,508 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sheet Music Transcriber</title>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.8.49/Tone.js"></script>
+    <style>
+        .staff-container {
+            width: 900px;
+            margin: 20px auto;
+        }
+
+        .staff {
+            position: relative;
+            width: 800px;
+            height: 200px;
+            margin: 20px auto;
+            background: repeating-linear-gradient(
+                to bottom,
+                #fff,
+                #fff 20px,
+                #000 20px,
+                #000 21px
+            );
+            border-left: 2px solid black;
+        }
+
+        .note {
+            position: absolute;
+            width: 20px;
+            height: 20px;
+            border-radius: 50%;
+            cursor: move;
+            display: flex;
+            align-items: center;
+        }
+
+        .whole-note {
+            border: 2px solid black;
+            background-color: white;
+        }
+
+        .half-note {
+            border: 2px solid black;
+            background-color: white;
+        }
+
+        .half-note::after, .quarter-note::after, .eighth-note::after, .sixteenth-note::after {
+            content: '';
+            position: absolute;
+            width: 2px;
+            height: 40px;
+            background: black;
+            left: 16px;
+            top: -30px;
+        }
+
+        .quarter-note {
+            background-color: black;
+        }
+
+        .eighth-note {
+            background-color: black;
+        }
+
+        .eighth-note::before {
+            content: '';
+            position: absolute;
+            width: 15px;
+            height: 2px;
+            background: black;
+            left: 16px;
+            top: -30px;
+        }
+
+        .sixteenth-note {
+            background-color: black;
+        }
+
+        .sixteenth-note::before {
+            content: '';
+            position: absolute;
+            width: 15px;
+            height: 2px;
+            background: black;
+            left: 16px;
+            top: -30px;
+            box-shadow: 0 -5px 0 black;
+        }
+
+        .treble-clef {
+            position: absolute;
+            left: 10px;
+            top: 20px;
+            font-size: 80px;
+            font-family: "Times New Roman", serif;
+        }
+
+        .time-signature {
+            position: absolute;
+            left: 70px;
+            font-size: 30px;
+            font-family: "Times New Roman", serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+
+        .controls {
+            text-align: center;
+            margin: 20px;
+        }
+
+        .note-selector, .time-selector {
+            margin: 10px;
+            padding: 5px;
+        }
+
+        button {
+            margin: 5px;
+            padding: 5px 10px;
+            cursor: pointer;
+        }
+
+        .bar-line {
+            position: absolute;
+            width: 2px;
+            height: 100%;
+            background: black;
+            cursor: move;
+        }
+
+        .key-signature {
+            position: absolute;
+            left: 90px;
+            top: 20px;
+            font-size: 24px;
+            font-family: "Times New Roman", serif;
+        }
+
+        .preview-note {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        .save-load {
+            margin: 20px;
+            text-align: center;
+        }
+
+        .playback-controls {
+            margin: 10px;
+            text-align: center;
+        }
+
+        .key-selector {
+            margin: 10px;
+            padding: 5px;
+        }
+    </style>
+</head>
+<body>
+    <div class="controls">
+        <h1>Sheet Music Transcriber</h1>
+        <button onclick="addNote()">Add Note</button>
+        <select id="noteType" class="note-selector">
+            <option value="whole">Whole Note</option>
+            <option value="half">Half Note</option>
+            <option value="quarter">Quarter Note</option>
+            <option value="eighth">Eighth Note</option>
+            <option value="sixteenth">Sixteenth Note</option>
+        </select>
+        <select id="timeSignature" class="time-selector">
+            <option value="4/4">4/4</option>
+            <option value="3/4">3/4</option>
+            <option value="2/4">2/4</option>
+            <option value="6/8">6/8</option>
+        </select>
+        <select id="keySignature" class="key-selector">
+            <option value="C">C Major</option>
+            <option value="G">G Major</option>
+            <option value="F">F Major</option>
+            <option value="D">D Major</option>
+            <option value="Bb">Bb Major</option>
+        </select>
+        <button onclick="addStaff()">Add Staff</button>
+        <button onclick="addBarLine()">Add Bar Line</button>
+        <button onclick="clearAll()">Clear All</button>
+    </div>
+
+    <div class="playback-controls">
+        <button onclick="playScore()">Play</button>
+        <button onclick="stopPlayback()">Stop</button>
+        <input type="range" id="tempo" min="60" max="200" value="120">
+        <span id="tempoValue">120 BPM</span>
+    </div>
+
+    <div class="save-load">
+        <button onclick="saveScore()">Save Score</button>
+        <button onclick="loadScore()">Load Score</button>
+        <input type="file" id="loadFile" style="display: none" accept=".json">
+    </div>
+
+    <div id="staff-container" class="staff-container">
+        <div class="staff">
+            <div class="treble-clef">𝄞</div>
+            <div class="key-signature"></div>
+            <div class="time-signature">
+                <span>4</span>
+                <span>4</span>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const staffContainer = document.getElementById('staff-container');
+        let draggedNote = null;
+        let offsetX, offsetY;
+
+        // Initialize Tone.js synth
+        const synth = new Tone.PolySynth().toDestination();
+
+        // Note preview
+        let previewNote = null;
+        document.addEventListener('mousemove', function(e) {
+            if (draggedNote) return;
+            
+            const staff = document.elementFromPoint(e.clientX, e.clientY);
+            if (staff && staff.classList.contains('staff')) {
+                if (!previewNote) {
+                    previewNote = document.createElement('div');
+                    previewNote.className = `note ${document.getElementById('noteType').value}-note preview-note`;
+                }
+                
+                const rect = staff.getBoundingClientRect();
+                const x = e.clientX - rect.left;
+                const y = e.clientY - rect.top;
+                
+                previewNote.style.left = x + 'px';
+                previewNote.style.top = y + 'px';
+                staff.appendChild(previewNote);
+            } else if (previewNote) {
+                previewNote.remove();
+                previewNote = null;
+            }
+        });
+
+        function addStaff() {
+            const staff = document.createElement('div');
+            staff.className = 'staff';
+            
+            const trebleClef = document.createElement('div');
+            trebleClef.className = 'treble-clef';
+            trebleClef.textContent = '𝄞';
+            
+            const timeSignature = document.createElement('div');
+            timeSignature.className = 'time-signature';
+            const [top, bottom] = document.getElementById('timeSignature').value.split('/');
+            timeSignature.innerHTML = `<span>${top}</span><span>${bottom}</span>`;
+            
+            const keySignature = document.createElement('div');
+            keySignature.className = 'key-signature';
+            
+            staff.appendChild(trebleClef);
+            staff.appendChild(keySignature);
+            staff.appendChild(timeSignature);
+            staffContainer.appendChild(staff);
+        }
+
+        function addNote() {
+            const staffs = document.getElementsByClassName('staff');
+            const lastStaff = staffs[staffs.length - 1];
+            
+            const note = document.createElement('div');
+            const noteType = document.getElementById('noteType').value;
+            
+            note.className = `note ${noteType}-note`;
+            note.style.left = '100px';
+            note.style.top = '80px';
+
+            note.addEventListener('mousedown', startDragging);
+            lastStaff.appendChild(note);
+        }
+
+        function startDragging(e) {
+            draggedNote = e.target;
+            const rect = draggedNote.getBoundingClientRect();
+            offsetX = e.clientX - rect.left;
+            offsetY = e.clientY - rect.top;
+
+            document.addEventListener('mousemove', drag);
+            document.addEventListener('mouseup', stopDragging);
+        }
+
+        function drag(e) {
+            if (!draggedNote) return;
+
+            const staffRect = draggedNote.parentElement.getBoundingClientRect();
+            let x = e.clientX - staffRect.left - offsetX;
+            let y = e.clientY - staffRect.top - offsetY;
+
+            x = Math.max(0, Math.min(x, staffRect.width - 20));
+            y = Math.max(0, Math.min(y, staffRect.height - 20));
+
+            draggedNote.style.left = x + 'px';
+            draggedNote.style.top = y + 'px';
+        }
+
+        function stopDragging() {
+            draggedNote = null;
+            document.removeEventListener('mousemove', drag);
+            document.removeEventListener('mouseup', stopDragging);
+        }
+
+        function clearAll() {
+            const staffContainer = document.getElementById('staff-container');
+            staffContainer.innerHTML = `
+                <div class="staff">
+                    <div class="treble-clef">𝄞</div>
+                    <div class="key-signature"></div>
+                    <div class="time-signature">
+                        <span>4</span>
+                        <span>4</span>
+                    </div>
+                </div>
+            `;
+        }
+
+        // Update time signature when changed
+        document.getElementById('timeSignature').addEventListener('change', function(e) {
+            const timeSignatures = document.getElementsByClassName('time-signature');
+            const [top, bottom] = e.target.value.split('/');
+            
+            for(let sig of timeSignatures) {
+                sig.innerHTML = `<span>${top}</span><span>${bottom}</span>`;
+            }
+        });
+
+        function addBarLine() {
+            const staffs = document.getElementsByClassName('staff');
+            const lastStaff = staffs[staffs.length - 1];
+            
+            const barLine = document.createElement('div');
+            barLine.className = 'bar-line';
+            barLine.style.left = '200px';
+            
+            barLine.addEventListener('mousedown', startDragging);
+            lastStaff.appendChild(barLine);
+        }
+
+        // Save score
+        function saveScore() {
+            const score = {
+                staffs: [],
+                timeSignature: document.getElementById('timeSignature').value,
+                keySignature: document.getElementById('keySignature').value
+            };
+
+            document.getElementsByClassName('staff').forEach(staff => {
+                const staffData = {
+                    notes: [],
+                    barLines: []
+                };
+
+                staff.getElementsByClassName('note').forEach(note => {
+                    staffData.notes.push({
+                        type: note.className.split(' ')[1].replace('-note', ''),
+                        left: note.style.left,
+                        top: note.style.top
+                    });
+                });
+
+                staff.getElementsByClassName('bar-line').forEach(barLine => {
+                    staffData.barLines.push({
+                        left: barLine.style.left
+                    });
+                });
+
+                score.staffs.push(staffData);
+            });
+
+            const blob = new Blob([JSON.stringify(score)], {type: 'application/json'});
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'score.json';
+            a.click();
+        }
+
+        // Load score
+        function loadScore() {
+            document.getElementById('loadFile').click();
+        }
+
+        document.getElementById('loadFile').addEventListener('change', function(e) {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = function(e) {
+                const score = JSON.parse(e.target.result);
+                clearAll();
+
+                document.getElementById('timeSignature').value = score.timeSignature;
+                document.getElementById('keySignature').value = score.keySignature;
+                updateTimeSignatures();
+                updateKeySignatures();
+
+                score.staffs.forEach((staffData, index) => {
+                    if (index > 0) addStaff();
+                    const staff = document.getElementsByClassName('staff')[index];
+
+                    staffData.notes.forEach(noteData => {
+                        const note = document.createElement('div');
+                        note.className = `note ${noteData.type}-note`;
+                        note.style.left = noteData.left;
+                        note.style.top = noteData.top;
+                        note.addEventListener('mousedown', startDragging);
+                        staff.appendChild(note);
+                    });
+
+                    staffData.barLines.forEach(barLineData => {
+                        const barLine = document.createElement('div');
+                        barLine.className = 'bar-line';
+                        barLine.style.left = barLineData.left;
+                        barLine.addEventListener('mousedown', startDragging);
+                        staff.appendChild(barLine);
+                    });
+                });
+            };
+
+            reader.readAsText(file);
+        });
+
+        // Playback functionality
+        async function playScore() {
+            await Tone.start();
+            const tempo = document.getElementById('tempo').value;
+            Tone.Transport.bpm.value = tempo;
+
+            const notes = document.getElementsByClassName('note');
+            let time = 0;
+
+            for (let note of notes) {
+                const pitch = calculatePitch(note);
+                const duration = calculateDuration(note);
+                
+                synth.triggerAttackRelease(pitch, duration, time);
+                time += Tone.Time(duration).toSeconds();
+            }
+        }
+
+        function stopPlayback() {
+            Tone.Transport.stop();
+            synth.releaseAll();
+        }
+
+        function calculatePitch(note) {
+            const staff = note.parentElement;
+            const rect = staff.getBoundingClientRect();
+            const relativeY = (note.offsetTop - rect.top) / 20;
+            const pitches = ['C5', 'B4', 'A4', 'G4', 'F4', 'E4', 'D4', 'C4'];
+            return pitches[Math.round(relativeY)];
+        }
+
+        function calculateDuration(note) {
+            const noteType = note.className.split(' ')[1];
+            const durations = {
+                'whole-note': '1n',
+                'half-note': '2n',
+                'quarter-note': '4n',
+                'eighth-note': '8n',
+                'sixteenth-note': '16n'
+            };
+            return durations[noteType];
+        }
+
+        // Update tempo display
+        document.getElementById('tempo').addEventListener('input', function(e) {
+            document.getElementById('tempoValue').textContent = `${e.target.value} BPM`;
+        });
+
+        // Key signature handling
+        function updateKeySignatures() {
+            const keySignatures = document.getElementsByClassName('key-signature');
+            const key = document.getElementById('keySignature').value;
+            const symbols = getKeySignatureSymbols(key);
+            
+            for(let sig of keySignatures) {
+                sig.textContent = symbols;
+            }
+        }
+
+        function getKeySignatureSymbols(key) {
+            const keySymbols = {
+                'C': '',
+                'G': '♯',
+                'F': '♭',
+                'D': '♯♯',
+                'Bb': '♭♭'
+            };
+            return keySymbols[key];
+        }
+
+        document.getElementById('keySignature').addEventListener('change', updateKeySignatures);
+    </script>
+</body>
+</html>
